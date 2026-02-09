@@ -1,0 +1,23 @@
+# 打包产物
+codex-history-skill.zip
+
+# Node 依赖与日志
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 测试与覆盖率产物
+coverage/
+.nyc_output/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp

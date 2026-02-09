@@ -1,0 +1,33 @@
+{
+  "name": "codex-history-skill",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Codex Skill: 管理本机对话历史（list/preview/archive/recover/delete）",
+  "keywords": [
+    "codex",
+    "skill",
+    "history",
+    "session",
+    "archive"
+  ],
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "scripts"
+  ],
+  "bin": {
+    "codex-history": "scripts/history-cli.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/unit-skill-history-cli.test.js",
+    "cli": "node scripts/history-cli.js",
+    "pack:skill": "node scripts/pack-skill.js"
+  }
+}

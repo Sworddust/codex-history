@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build skill package
+        run: npm run pack:skill
+
+      - name: Build release notes from CHANGELOG
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          OUT_FILE="release-notes.md"
+
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { in_section=1 }
+            in_section && $0 ~ "^## \\[" && $0 !~ "^## \\[" ver "\\]" { exit }
+            in_section { print }
+          ' CHANGELOG.md > "$OUT_FILE"
+
+          if [ ! -s "$OUT_FILE" ]; then
+            {
+              echo "## v${VERSION}"
+              echo
+              echo "See CHANGELOG.md for details."
+            } > "$OUT_FILE"
+          fi
+
+          {
+            echo
+            echo "---"
+            echo "Full Changelog: https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}"
+          } >> "$OUT_FILE"
+
+      - name: Create GitHub Release and upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            codex-history-skill.zip
