@@ -25,18 +25,54 @@ class CliError extends Error {
   }
 }
 
+const HELP_TITLE = "Codex History Skill CLI";
+const HELP_COMMANDS = [
+  {
+    name: "list",
+    usage: "history-cli list [--source all|sessions|archived] [--limit N] [--json]",
+  },
+  {
+    name: "preview",
+    usage: "history-cli preview --session-id <id> [--max-messages N] [--json]",
+  },
+  {
+    name: "delete",
+    usage: "history-cli delete --session-id <id> [--session-id <id> ...] [--force] [--json]",
+  },
+  {
+    name: "archive",
+    usage: "history-cli archive --session-id <id> [--session-id <id> ...] [--force] [--json]",
+  },
+  {
+    name: "recover",
+    usage: "history-cli recover --session-id <id> [--session-id <id> ...] [--force] [--json]",
+  },
+];
+
 function printHelp() {
-  const lines = [
-    "Codex History Skill CLI",
-    "",
-    "用法:",
-    "  history-cli list [--source all|sessions|archived] [--limit N] [--json]",
-    "  history-cli preview --session-id <id> [--max-messages N] [--json]",
-    "  history-cli delete --session-id <id> [--session-id <id> ...] [--force] [--json]",
-    "  history-cli archive --session-id <id> [--session-id <id> ...] [--force] [--json]",
-    "  history-cli recover --session-id <id> [--session-id <id> ...] [--force] [--json]",
-  ];
+  const lines = [HELP_TITLE, "", "用法:"];
+  for (const command of HELP_COMMANDS) {
+    lines.push(`  ${command.usage}`);
+  }
   console.log(lines.join("\n"));
+}
+
+function buildHelpPayload() {
+  return {
+    commands: HELP_COMMANDS.map((command) => ({
+      name: command.name,
+      usage: command.usage,
+    })),
+    title: HELP_TITLE,
+  };
+}
+
+function outputHelp(asJson) {
+  if (asJson) {
+    console.log(toJson(buildHelpPayload()));
+    return;
+  }
+  printHelp();
 }
 
 function requireValue(args, index, optionName) {
@@ -234,6 +270,31 @@ function outputPayload(payload, asJson, humanFormatter) {
   console.log(humanFormatter(payload));
 }
 
+function argvWantsJson(argv) {
+  return Array.isArray(argv) && argv.includes("--json");
+}
+
+function outputError(error, argv) {
+  const exitCode = error instanceof CliError ? error.exitCode : EXIT_CODES.UNHANDLED;
+  const message = error && error.message ? error.message : "未知异常";
+
+  if (argvWantsJson(argv)) {
+    console.log(
+      toJson({
+        error: {
+          exitCode,
+          message,
+          type: error instanceof CliError ? "cli_error" : "unhandled_error",
+        },
+      })
+    );
+    return exitCode;
+  }
+
+  console.error(message);
+  return exitCode;
+}
+
 function runList(options) {
   const codexHome = history.getCodexHome();
   let items = history.loadSessionIndex(codexHome);
@@ -418,7 +479,7 @@ function parseCommand(command, args) {
 function runCli(argv) {
   try {
     if (!Array.isArray(argv) || argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
-      printHelp();
+      outputHelp(argvWantsJson(argv));
       return EXIT_CODES.OK;
     }
 
@@ -426,12 +487,7 @@ function runCli(argv) {
     const action = parseCommand(command, args);
     return action.run(action.options);
   } catch (error) {
-    if (error instanceof CliError) {
-      console.error(error.message);
-      return error.exitCode;
-    }
-    console.error(error && error.message ? error.message : "未知异常");
-    return EXIT_CODES.UNHANDLED;
+    return outputError(error, argv);
   }
 }
 

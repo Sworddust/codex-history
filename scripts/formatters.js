@@ -18,18 +18,15 @@ function formatListHuman(payload) {
     return "未找到会话记录。";
   }
 
-  const lines = ["Codex 会话列表："];
+  const lines = [`Codex 会话列表（共 ${payload.total} 条）：`];
   for (const item of items) {
     const timeText = item.timeText || "无时间";
     const sourceText = item.source || "unknown";
     const titleText = formatListTitle(item.title, item.sessionId);
-    lines.push(`- [${sourceText}]`);
-    lines.push(`  标题: ${titleText}`);
-    lines.push(`  sessionId: ${item.sessionId}`);
-    lines.push(`  时间: ${timeText}`);
+    lines.push(`- [${sourceText}] 标题: ${titleText}`);
+    lines.push(`  sessionId: ${item.sessionId} | 时间: ${timeText}`);
     lines.push(`  文件: ${item.filePath}`);
   }
-  lines.push(`总数: ${payload.total}`);
   return lines.join("\n");
 }
 
@@ -46,11 +43,14 @@ function formatPreviewHuman(payload) {
   }
 
   lines.push("消息：");
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     const role = message.role === "user" ? "用户" : "助手";
     const time = message.timestamp || "";
-    lines.push(`- ${role}${time ? ` (${time})` : ""}`);
-    lines.push(`  ${message.text}`);
+    if (index > 0) {
+      lines.push("----");
+    }
+    lines.push(`[${index + 1}] ${role}${time ? ` (${time})` : ""}`);
+    lines.push(message.text);
   }
   return lines.join("\n");
 }

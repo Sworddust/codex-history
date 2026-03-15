@@ -15,12 +15,15 @@
 - 恢复误归档会话（`archived_sessions` -> `sessions/YYYY/MM/DD`）
 - 删除指定会话并同步清理 `history.jsonl`
 - 支持普通文本输出和 `--json` 输出
+- 当命令带 `--json` 时，成功和失败都会输出结构化 JSON，便于脚本调用
 
 ## 2.1 重要提醒（删除不可恢复）
 
 - `delete` 是**物理删除**，会直接删除会话文件，并从 `history.jsonl` 移除对应记录。
+- `delete` **必须显式传入** `--force`，否则会直接返回参数错误。
 - 删除后默认**不可恢复**，请仅在确认无误时执行。
 - 若需要“可撤销”的处理，请优先使用 `archive`，误操作可用 `recover` 恢复。
+- `archive` / `recover` 遇到目标同名文件时，默认跳过并记为冲突；传入 `--force` 时会优先覆盖目标文件。
 
 ## 3. 如何使用
 
@@ -56,11 +59,20 @@ node scripts/history-cli.js list --source archived --limit 10
 # 预览会话
 node scripts/history-cli.js preview --session-id <id>
 
+# 预览会话并返回 JSON
+node scripts/history-cli.js preview --session-id <id> --json
+
 # 归档会话
 node scripts/history-cli.js archive --session-id <id>
 
+# 归档会话（目标冲突时允许覆盖）
+node scripts/history-cli.js archive --session-id <id> --force
+
 # 恢复归档会话
 node scripts/history-cli.js recover --session-id <id>
+
+# 恢复归档会话（目标冲突时允许覆盖）
+node scripts/history-cli.js recover --session-id <id> --force
 
 # 删除会话（物理删除，不可恢复）
 node scripts/history-cli.js delete --session-id <id> --force

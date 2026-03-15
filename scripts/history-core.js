@@ -243,9 +243,52 @@ function extractFirstRealUserMessageFromItems(items) {
   return "";
 }
 
+function normalizeTitleCandidate(text) {
+  const normalized = normalizeUserMessageForTitle(text);
+  if (!normalized || isInstructionLike(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function getSourcePriority(source) {
+  if (source === "sessions") {
+    return 2;
+  }
+  if (source === "archived") {
+    return 1;
+  }
+  return 0;
+}
+
+function buildSessionEntry({ filePath, historyMap, items, source }) {
+  const meta = extractSessionMetaFromItems(items);
+  if (!meta || !meta.id) {
+    return null;
+  }
+
+  const historyItem = historyMap.get(meta.id);
+  const historyTitle = normalizeTitleCandidate(historyItem && historyItem.text ? historyItem.text : "");
+  const firstUserText = extractFirstRealUserMessageFromItems(items);
+  const title = historyTitle || firstUserText || meta.id;
+  const timestamp = historyItem && historyItem.ts ? historyItem.ts : meta.timestamp;
+
+  return {
+    filePath,
+    sessionId: meta.id,
+    source,
+    timeText: formatTimestamp(timestamp),
+    timestamp,
+    title,
+  };
+}
+
 function collectMessagesFromItems(items) {
   const messages = [];
+  const assistantMessagesBeforeRealUser = [];
+  let hasAnyUser = false;
   let hasRealUser = false;
+
   for (const item of items) {
     if (!item || item.type !== "response_item") {
       continue;
@@ -262,6 +305,7 @@ function collectMessagesFromItems(items) {
       continue;
     }
     if (payload.role === "user") {
+      hasAnyUser = true;
       if (isInstructionLike(text)) {
         continue;
       }
@@ -273,32 +317,32 @@ function collectMessagesFromItems(items) {
       });
       continue;
     }
-    if (!hasRealUser) {
-      continue;
-    }
-    messages.push({
+
+    const message = {
       role: payload.role,
       text,
       timestamp: item.timestamp || "",
-    });
+    };
+    if (!hasRealUser) {
+      assistantMessagesBeforeRealUser.push(message);
+      continue;
+    }
+    messages.push(message);
   }
-  return messages;
+
+  if (hasRealUser) {
+    return messages;
+  }
+  if (hasAnyUser) {
+    return [];
+  }
+  return assistantMessagesBeforeRealUser;
 }
 
 function loadSessionIndex(codexHome) {
   const { map } = readHistoryMap(codexHome);
   const { sessions, archived } = listSessionFiles(codexHome);
   const entriesBySessionId = new Map();
-
-  const getSourcePriority = (source) => {
-    if (source === "sessions") {
-      return 2;
-    }
-    if (source === "archived") {
-      return 1;
-    }
-    return 0;
-  };
 
   const upsertEntry = (entry) => {
     const existing = entriesBySessionId.get(entry.sessionId);
@@ -330,28 +374,16 @@ function loadSessionIndex(codexHome) {
         continue;
       }
       const items = parseJsonLines(content);
-      const meta = extractSessionMetaFromItems(items);
-      if (!meta || !meta.id) {
-        continue;
-      }
-      const firstUserText = extractFirstRealUserMessageFromItems(items);
-      if (!firstUserText) {
-        continue;
-      }
-      const historyItem = map.get(meta.id);
-      const normalizedHistoryTitle = normalizeUserMessageForTitle(
-        historyItem && historyItem.text ? historyItem.text : ""
-      );
-      const title = normalizedHistoryTitle || firstUserText;
-      const timestamp = historyItem && historyItem.ts ? historyItem.ts : meta.timestamp;
-      upsertEntry({
+      const entry = buildSessionEntry({
         filePath,
-        sessionId: meta.id,
+        historyMap: map,
+        items,
         source,
-        timeText: formatTimestamp(timestamp),
-        timestamp,
-        title,
       });
+      if (!entry) {
+        continue;
+      }
+      upsertEntry(entry);
     }
   };
 
@@ -359,7 +391,13 @@ function loadSessionIndex(codexHome) {
   addEntries(archived, "archived");
 
   const all = Array.from(entriesBySessionId.values());
-  all.sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
+  all.sort((a, b) => {
+    const timeDiff = toMillis(b.timestamp) - toMillis(a.timestamp);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return getSourcePriority(b.source) - getSourcePriority(a.source);
+  });
   return all;
 }
 
