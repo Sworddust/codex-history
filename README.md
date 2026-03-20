@@ -4,13 +4,14 @@
 
 ## 1. 简单介绍 Skill
 
-`Codex History Skill` 用于管理本机 Codex 对话历史，支持查看、预览、归档、恢复和删除会话记录。
+`Codex History Skill` 用于管理本机 Codex 对话历史，支持查看、预览、导出、归档、恢复和删除会话记录。
 
 ## 2. 功能清单
 
-- 列出会话历史（支持 `sessions` / `archived_sessions`）
+- 列出会话历史（默认仅展示未归档 `sessions`，支持通过 `--source archived|all` 查看归档或全部）
 - 会话列表输出包含标题（标题为空时回退为 `sessionId`）
 - 按 `session-id` 预览会话内容
+- 将指定会话导出为 Markdown 内容文件（输出路径必须位于当前项目工作目录内，导出内容包含 `sessionId`、来源、时间与按时间顺序排列的用户/助手消息）
 - 归档指定会话（`sessions` -> `archived_sessions`）
 - 恢复误归档会话（`archived_sessions` -> `sessions/YYYY/MM/DD`）
 - 删除指定会话并同步清理 `history.jsonl`
@@ -50,8 +51,11 @@ unzip codex-history-skill.zip -d ~/.codex/skills
 ## 3.1 CLI 命令速查
 
 ```bash
-# 列表（最近 10 条）
+# 列表（默认最近 10 条未归档会话）
 node scripts/history-cli.js list --limit 10
+
+# 查看全部会话（含归档）
+node scripts/history-cli.js list --source all --limit 10
 
 # 仅看归档会话
 node scripts/history-cli.js list --source archived --limit 10
@@ -61,6 +65,9 @@ node scripts/history-cli.js preview --session-id <id>
 
 # 预览会话并返回 JSON
 node scripts/history-cli.js preview --session-id <id> --json
+
+# 导出会话为 Markdown 内容文件（包含 `sessionId`、来源、时间与交替式消息记录）
+node scripts/history-cli.js export --session-id <id> --output ./exports/session.md
 
 # 归档会话
 node scripts/history-cli.js archive --session-id <id>
@@ -78,7 +85,14 @@ node scripts/history-cli.js recover --session-id <id> --force
 node scripts/history-cli.js delete --session-id <id> --force
 ```
 
-## 3.2 兼容性
+## 3.2 export 导出说明
+
+- `export` 使用单一导出格式：文件头固定包含 `sessionId`、来源、时间。
+- 正文按会话原始顺序输出真实 `user/assistant` 消息，并为每条消息展示时间与正文代码块。
+- 默认不导出 `system` 消息到正文，也不导出仅由角色提示、环境注入或包装模板组成的无用内容。
+- `--max-messages` 仅统计最终实际写入正文的有效消息。
+
+## 3.3 兼容性
 
 - Node.js `>=14.0.0`
 - 建议在 Node.js 18 或更高版本运行
@@ -89,6 +103,8 @@ node scripts/history-cli.js delete --session-id <id> --force
 使用 codex-history skill 列举最近对话
 
 使用 codex-history skill 预览 session-id 为 019c4040-xxxx 的对话
+
+使用 codex-history skill 导出 session-id 为 019c4040-xxxx 的对话到 Markdown 内容文件（包含 sessionId、来源、时间与交替式消息记录）
 
 使用 codex-history skill 删除 session-id 为 019c4040-xxxx 的对话
 

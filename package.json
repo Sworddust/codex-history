@@ -1,9 +1,9 @@
 {
   "name": "codex-history-skill",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
-  "description": "Codex Skill: 管理本机对话历史（list/preview/archive/recover/delete）",
+  "description": "Codex Skill: 管理本机对话历史（list/preview/export/archive/recover/delete）",
   "keywords": [
     "codex",
     "skill",

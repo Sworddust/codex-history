@@ -44,7 +44,7 @@ function formatPreviewHuman(payload) {
 
   lines.push("消息：");
   for (const [index, message] of messages.entries()) {
-    const role = message.role === "user" ? "用户" : "助手";
+    const role = formatMessageRole(message.role);
     const time = message.timestamp || "";
     if (index > 0) {
       lines.push("----");
@@ -52,6 +52,90 @@ function formatPreviewHuman(payload) {
     lines.push(`[${index + 1}] ${role}${time ? ` (${time})` : ""}`);
     lines.push(message.text);
   }
+  return lines.join("\n");
+}
+
+function formatMessageRole(role) {
+  if (role === "user") {
+    return "用户";
+  }
+  if (role === "assistant") {
+    return "助手";
+  }
+  if (role === "system") {
+    return "系统";
+  }
+  return role || "未知角色";
+}
+
+function getMarkdownFence(text) {
+  const matches = typeof text === "string" ? text.match(/`+/g) : null;
+  let longest = 0;
+  if (matches) {
+    for (const match of matches) {
+      if (match.length > longest) {
+        longest = match.length;
+      }
+    }
+  }
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+function formatMarkdownMessageBody(text) {
+  const normalized = typeof text === "string" ? text.replace(/\r\n/g, "\n") : "";
+  if (!normalized) {
+    return "```text\n（空消息）\n```";
+  }
+
+  const fence = getMarkdownFence(normalized);
+  return `${fence}text\n${normalized}\n${fence}`;
+}
+
+function formatMarkdownInline(text, fallback) {
+  const normalized = typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+  const finalText = normalized || fallback || "";
+  return finalText.replace(/([\\`*_{}\[\]()#+\-.!|<>])/g, "\\$1");
+}
+
+function formatSessionMarkdown(payload) {
+  const headerTitle = formatMarkdownInline(payload.title, payload.sessionId || "未命名会话");
+  const lines = [
+    `# ${headerTitle}`,
+    "",
+    `- sessionId: ${payload.sessionId || ""}`,
+    `- 来源: ${payload.source || "unknown"}`,
+    `- 时间: ${payload.timeText || "无时间"}`,
+    "",
+    "## 消息记录",
+  ];
+
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (messages.length === 0) {
+    lines.push("");
+    lines.push("暂无可导出消息。");
+    return lines.join("\n");
+  }
+
+  for (const [index, message] of messages.entries()) {
+    lines.push("");
+    lines.push(`### ${index + 1}. ${formatMessageRole(message.role)}`);
+    lines.push("");
+    lines.push(`- 时间: ${message.timestamp || "无时间"}`);
+    lines.push("");
+    lines.push(formatMarkdownMessageBody(message.text));
+  }
+
+  return lines.join("\n");
+}
+
+function formatExportHuman(payload) {
+  const lines = [
+    "导出结果：",
+    `- sessionId: ${payload.sessionId}`,
+    `- 格式: ${payload.format}`,
+    `- 输出文件: ${payload.outputPath}`,
+    `- 消息数: ${payload.messageCount}`,
+  ];
   return lines.join("\n");
 }
 
@@ -156,7 +240,9 @@ function formatRecoverHuman(payload) {
 module.exports = {
   formatArchiveHuman,
   formatDeleteHuman,
+  formatExportHuman,
   formatListHuman,
+  formatSessionMarkdown,
   formatPreviewHuman,
   formatRecoverHuman,
   toJson,

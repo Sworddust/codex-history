@@ -1,6 +1,6 @@
 ---
 name: codex-history
-description: 在 Codex 对话中管理本机历史会话，支持 list、preview、archive、recover、delete，并同步清理 history.jsonl。
+description: 在 Codex 对话中管理本机历史会话，支持 list、preview、export、archive、recover、delete，并同步清理 history.jsonl。
 license: MIT
 ---
 
@@ -9,18 +9,19 @@ license: MIT
 ## 适用场景
 - 在 Codex CLI 对话中查看本机会话历史
 - 预览指定会话消息内容
+- 导出指定会话为 Markdown 内容文件（包含 `sessionId`、来源、时间与按时间顺序排列的用户/助手消息）
 - 归档指定会话到 `archived_sessions`
 - 将误归档会话恢复到 `sessions/YYYY/MM/DD`
 - 按明确 `session-id` 删除会话，并同步清理 `history.jsonl`
 
 ## 触发条件（必须同时满足）
-- 用户请求属于 `list`、`preview`、`archive`、`recover`、`delete` 五类之一
+- 用户请求属于 `list`、`preview`、`export`、`archive`、`recover`、`delete` 六类之一
 - 目标是 Codex 本地历史（`CODEX_HOME` 或 `~/.codex`）
 - 可通过 `node scripts/history-cli.js` 完成，不需要其他脚本
 
 ## 禁止触发（命中任一即拒绝）
 - 模糊删除或批量清空请求（如“全删”“删最近几条”但未提供 `session-id`）
-- 任何 `.codex` 目录之外的文件系统操作
+- 任何超出当前项目工作目录与 `CODEX_HOME` 会话数据范围的文件系统操作
 - 任何非白名单命令（如 `rm`、`del`、`git`、`python`、自定义脚本）
 - 修改、覆盖或重命名 Skill 源码与配置文件
 
@@ -28,6 +29,8 @@ license: MIT
 - Skill 为自包含实现，安装到 `$CODEX_HOME/skills/codex-history` 后可独立运行
 - 默认读取 `CODEX_HOME`，未设置时回退到 `~/.codex`
 - 只处理会话相关数据：`sessions`、`archived_sessions`、`history.jsonl`
+- `export` 仅允许写入当前项目工作目录内的相对路径，不允许写到工作目录外
+- `export` 使用单一导出格式：文件头包含 `sessionId`、来源、时间；正文按时间顺序导出真实 `user/assistant` 消息，且不把 `system` 正文重复导出到正文部分
 - `archive` 仅允许把 `sessions` 中会话归档到 `archived_sessions`
 - `recover` 仅允许把 `archived_sessions` 中会话恢复到 `sessions/YYYY/MM/DD`
 - `delete` 为物理删除：会删除会话文件并清理 `history.jsonl` 对应行，执行后不可恢复（除非用户有外部备份）
@@ -43,6 +46,11 @@ node scripts/history-cli.js list [--source all|sessions|archived] [--limit N] [-
 ### preview
 ```bash
 node scripts/history-cli.js preview --session-id <id> [--max-messages N] [--json]
+```
+
+### export
+```bash
+node scripts/history-cli.js export --session-id <id> --output <file> [--format md] [--max-messages N] [--json]
 ```
 
 ### archive
@@ -70,7 +78,7 @@ node scripts/history-cli.js delete --session-id <id> [--session-id <id> ...] [--
 5. 删除后必须返回删除摘要：`deletedFiles`、`failedFiles`、`removedHistoryLines`
 
 ## 执行流程（建议）
-1. 识别用户意图并匹配 `list/preview/archive/recover/delete`
+1. 识别用户意图并匹配 `list/preview/export/archive/recover/delete`
 2. 检查是否命中禁止触发项
 3. 仅使用白名单命令执行操作
 4. 按统一输出格式返回结果
@@ -90,8 +98,8 @@ node scripts/history-cli.js delete --session-id <id> [--session-id <id> ...] [--
 ## 越界拒绝模板
 ```text
 该请求超出 codex-history 的能力边界。
-本 Skill 仅支持 list / preview / archive / recover / delete（按 session-id 精确操作），
-不会执行白名单之外命令，也不会操作 .codex 之外路径。
+本 Skill 仅支持 list / preview / export / archive / recover / delete（按 session-id 精确操作），
+不会执行白名单之外命令，也不会操作当前项目工作目录与 `CODEX_HOME` 之外路径。
 ```
 
 ## 退出码
@@ -105,6 +113,7 @@ node scripts/history-cli.js delete --session-id <id> [--session-id <id> ...] [--
 ```bash
 node scripts/history-cli.js list --limit 5
 node scripts/history-cli.js preview --session-id sess-123 --json
+node scripts/history-cli.js export --session-id sess-123 --output ./exports/sess-123.md --format md
 node scripts/history-cli.js archive --session-id sess-123
 node scripts/history-cli.js recover --session-id sess-123
 node scripts/history-cli.js delete --session-id sess-123 --session-id sess-456 --force

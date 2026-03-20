@@ -19,6 +19,11 @@ coverage/
 Thumbs.db
 
 # 临时文件
+exports/**
 *.tmp
 *.temp
 .ace-tool/
+.claude-review-gemini.txt
+.claude-review-codex.txt
+CLAUDE.md
+

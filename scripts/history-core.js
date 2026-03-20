@@ -17,6 +17,18 @@ const IDE_REQUEST_MARKERS = [
   /(?:^|\n)##\s*My request\s*:?\s*(?:\n|$)/i,
 ];
 
+const EXPORT_WRAPPER_MARKERS = [
+  "# Codex Role:",
+  "## CRITICAL CONSTRAINTS",
+  "## Core Expertise",
+  "## Analysis Framework",
+  "## Response Structure",
+  "<TASK>",
+  "</TASK>",
+  "OUTPUT:",
+  "For: /ccg:",
+];
+
 function getCodexHome() {
   return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 }
@@ -182,6 +194,89 @@ function isInstructionLike(text) {
   return INSTRUCTION_MARKERS.some((marker) => text.includes(marker));
 }
 
+function isExportWrapperLike(text) {
+  if (!text) {
+    return false;
+  }
+  return EXPORT_WRAPPER_MARKERS.some((marker) => text.includes(marker));
+}
+
+function isExportControlLike(text) {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/^<skill>[\s\S]*<\/skill>$/i.test(normalized)) {
+    return true;
+  }
+  if (/^<turn_aborted>[\s\S]*<\/turn_aborted>$/i.test(normalized)) {
+    return true;
+  }
+  if (/^\$codex-history\b/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractTaskSection(text) {
+  if (!text) {
+    return "";
+  }
+
+  const startMatched = text.match(/<TASK>\s*/i);
+  if (!startMatched || startMatched.index == null) {
+    return "";
+  }
+
+  const taskStartIndex = startMatched.index + startMatched[0].length;
+  const remainder = text.slice(taskStartIndex);
+  const endMatched = remainder.match(/\s*<\/TASK>/i);
+  const taskBody = endMatched ? remainder.slice(0, endMatched.index) : remainder;
+  const normalized = taskBody.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const demandMatched = normalized.match(/(?:^|\n)需求：\s*([\s\S]*?)(?=\n(?:上下文：|OUTPUT:)|$)/);
+  if (demandMatched && demandMatched[1]) {
+    return demandMatched[1].trim();
+  }
+
+  return normalized;
+}
+
+function normalizeExportPrompt(text) {
+  const normalized = normalizeUserMessageForTitle(text);
+  if (!normalized) {
+    return "";
+  }
+
+  if (isExportControlLike(normalized)) {
+    return "";
+  }
+
+  if (isInstructionLike(normalized)) {
+    return "";
+  }
+
+  const taskSection = extractTaskSection(normalized);
+  if (taskSection) {
+    return taskSection;
+  }
+
+  if (isExportWrapperLike(normalized)) {
+    return "";
+  }
+
+  return normalized;
+}
+
 function extractRequestSectionFromIdeContext(text) {
   if (!text || !text.includes("Context from my IDE setup")) {
     return "";
@@ -234,8 +329,8 @@ function extractFirstRealUserMessageFromItems(items) {
     if (payload.type !== "message" || payload.role !== "user") {
       continue;
     }
-    const text = normalizeUserMessageForTitle(extractMessageText(payload));
-    if (!text || isInstructionLike(text)) {
+    const text = normalizeExportPrompt(extractMessageText(payload));
+    if (!text) {
       continue;
     }
     return text;
@@ -244,11 +339,7 @@ function extractFirstRealUserMessageFromItems(items) {
 }
 
 function normalizeTitleCandidate(text) {
-  const normalized = normalizeUserMessageForTitle(text);
-  if (!normalized || isInstructionLike(normalized)) {
-    return "";
-  }
-  return normalized;
+  return normalizeExportPrompt(text);
 }
 
 function getSourcePriority(source) {
@@ -283,10 +374,87 @@ function buildSessionEntry({ filePath, historyMap, items, source }) {
   };
 }
 
-function collectMessagesFromItems(items) {
+function collectMessagesFromItems(items, options = {}) {
+  const includeSystem = Boolean(options.includeSystem);
+  const allowFallbackWithoutRealUser = options.allowFallbackWithoutRealUser !== false;
+  const allowInstructionOnlySystemFallback = options.allowInstructionOnlySystemFallback !== false;
   const messages = [];
+  const systemMessages = [];
   const assistantMessagesBeforeRealUser = [];
+  const fallbackMessages = [];
   let hasAnyUser = false;
+  let hasRealUser = false;
+
+  for (const item of items) {
+    if (!item || item.type !== "response_item") {
+      continue;
+    }
+    const payload = item.payload || {};
+    if (payload.type !== "message" || !payload.role) {
+      continue;
+    }
+    if (payload.role !== "user" && payload.role !== "assistant" && payload.role !== "system") {
+      continue;
+    }
+    const text = extractMessageText(payload);
+    if (!text) {
+      continue;
+    }
+
+    const message = {
+      role: payload.role,
+      text,
+      timestamp: item.timestamp || "",
+    };
+
+    if (!hasRealUser && (payload.role === "system" || payload.role === "assistant")) {
+      fallbackMessages.push(message);
+    }
+
+    if (payload.role === "system") {
+      systemMessages.push(message);
+      if (includeSystem && hasRealUser) {
+        messages.push(message);
+      }
+      continue;
+    }
+    if (payload.role === "user") {
+      hasAnyUser = true;
+      if (isInstructionLike(text)) {
+        continue;
+      }
+      hasRealUser = true;
+      if (includeSystem && systemMessages.length > 0 && messages.length === 0) {
+        messages.push(...systemMessages);
+      }
+      messages.push(message);
+      continue;
+    }
+
+    if (!hasRealUser) {
+      assistantMessagesBeforeRealUser.push(message);
+      continue;
+    }
+    messages.push(message);
+  }
+
+  if (hasRealUser) {
+    return messages;
+  }
+  if (hasAnyUser) {
+    if (!allowInstructionOnlySystemFallback) {
+      return [];
+    }
+    return includeSystem ? systemMessages : [];
+  }
+  if (!allowFallbackWithoutRealUser) {
+    return [];
+  }
+  return includeSystem ? fallbackMessages : assistantMessagesBeforeRealUser;
+}
+
+function collectExportMessagesFromItems(items) {
+  const messages = [];
   let hasRealUser = false;
 
   for (const item of items) {
@@ -300,43 +468,47 @@ function collectMessagesFromItems(items) {
     if (payload.role !== "user" && payload.role !== "assistant") {
       continue;
     }
+
     const text = extractMessageText(payload);
     if (!text) {
       continue;
     }
+
     if (payload.role === "user") {
-      hasAnyUser = true;
-      if (isInstructionLike(text)) {
+      const normalized = normalizeExportPrompt(text);
+      if (!normalized) {
         continue;
       }
       hasRealUser = true;
       messages.push({
-        role: payload.role,
-        text,
+        role: "user",
+        text: normalized,
         timestamp: item.timestamp || "",
       });
       continue;
     }
 
-    const message = {
-      role: payload.role,
-      text,
-      timestamp: item.timestamp || "",
-    };
     if (!hasRealUser) {
-      assistantMessagesBeforeRealUser.push(message);
       continue;
     }
-    messages.push(message);
+
+    messages.push({
+      role: "assistant",
+      text,
+      timestamp: item.timestamp || "",
+    });
   }
 
-  if (hasRealUser) {
-    return messages;
-  }
-  if (hasAnyUser) {
-    return [];
-  }
-  return assistantMessagesBeforeRealUser;
+  return messages;
+}
+
+function readSessionExportData(filePath) {
+  const content = readFileIfExists(filePath);
+  const items = parseJsonLines(content);
+  const messages = collectExportMessagesFromItems(items);
+  return {
+    messages,
+  };
 }
 
 function loadSessionIndex(codexHome) {
@@ -401,10 +573,10 @@ function loadSessionIndex(codexHome) {
   return all;
 }
 
-function readSessionMessages(filePath) {
+function readSessionMessages(filePath, options = {}) {
   const content = readFileIfExists(filePath);
   const items = parseJsonLines(content);
-  return collectMessagesFromItems(items);
+  return collectMessagesFromItems(items, options);
 }
 
 function deleteSessions({ sessionIds, sessionFiles, codexHome }) {
@@ -654,6 +826,7 @@ module.exports = {
   deleteSessions,
   getCodexHome,
   loadSessionIndex,
+  readSessionExportData,
   recoverSessions,
   readSessionMessages,
 };

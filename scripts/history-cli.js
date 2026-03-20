@@ -1,9 +1,13 @@
 #!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
 const history = require("./history-core");
 const {
   formatArchiveHuman,
   formatDeleteHuman,
+  formatExportHuman,
   formatListHuman,
+  formatSessionMarkdown,
   formatPreviewHuman,
   formatRecoverHuman,
   toJson,
@@ -46,6 +50,11 @@ const HELP_COMMANDS = [
   {
     name: "recover",
     usage: "history-cli recover --session-id <id> [--session-id <id> ...] [--force] [--json]",
+  },
+  {
+    name: "export",
+    usage:
+      "history-cli export --session-id <id> --output <file> [--format md] [--max-messages N] [--json]",
   },
 ];
 
@@ -93,7 +102,7 @@ function parsePositiveInt(value, optionName) {
 
 function parseListArgs(args) {
   const options = {
-    source: "all",
+    source: "sessions",
     limit: null,
     json: false,
   };
@@ -262,6 +271,117 @@ function parseRecoverArgs(args) {
   return options;
 }
 
+function findNearestExistingPath(targetPath) {
+  let currentPath = targetPath;
+  while (!fs.existsSync(currentPath)) {
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      break;
+    }
+    currentPath = parentPath;
+  }
+  return currentPath;
+}
+
+function ensurePathInsideProject(targetPath, displayPath) {
+  const projectRoot = process.cwd();
+  const projectRootRealPath = fs.realpathSync.native(projectRoot);
+  const nearestExistingPath = findNearestExistingPath(targetPath);
+  const nearestExistingRealPath = fs.realpathSync.native(nearestExistingPath);
+  const remainingPath = path.relative(nearestExistingPath, targetPath);
+  const realTargetPath = remainingPath
+    ? path.resolve(nearestExistingRealPath, remainingPath)
+    : nearestExistingRealPath;
+  const relativeRealTargetPath = path.relative(projectRootRealPath, realTargetPath);
+
+  if (
+    !relativeRealTargetPath ||
+    relativeRealTargetPath === "." ||
+    relativeRealTargetPath.startsWith("..") ||
+    path.isAbsolute(relativeRealTargetPath)
+  ) {
+    throw new CliError(
+      `export 命令的 --output 必须位于当前项目目录内，且不能通过链接跳出项目目录: ${displayPath}`,
+      EXIT_CODES.PARAM_ERROR
+    );
+  }
+
+  return targetPath;
+}
+
+function parseExportArgs(args) {
+  const options = {
+    format: "md",
+    json: false,
+    maxMessages: null,
+    outputDisplayPath: "",
+    outputPath: "",
+    sessionId: "",
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--session-id") {
+      const value = requireValue(args, index, token);
+      options.sessionId = value;
+      index += 1;
+      continue;
+    }
+    if (token === "--output") {
+      const value = requireValue(args, index, token);
+      options.outputDisplayPath = value;
+      options.outputPath = value;
+      index += 1;
+      continue;
+    }
+    if (token === "--format") {
+      const value = requireValue(args, index, token);
+      if (value !== "md") {
+        throw new CliError("参数 --format 目前仅支持 md", EXIT_CODES.PARAM_ERROR);
+      }
+      options.format = value;
+      index += 1;
+      continue;
+    }
+    if (token === "--max-messages") {
+      const value = requireValue(args, index, token);
+      options.maxMessages = parsePositiveInt(value, token);
+      index += 1;
+      continue;
+    }
+    throw new CliError(`未知参数: ${token}`, EXIT_CODES.PARAM_ERROR);
+  }
+
+  if (!options.sessionId) {
+    throw new CliError("export 命令缺少 --session-id", EXIT_CODES.PARAM_ERROR);
+  }
+  if (!options.outputPath) {
+    throw new CliError("export 命令缺少 --output", EXIT_CODES.PARAM_ERROR);
+  }
+  if (path.isAbsolute(options.outputPath)) {
+    throw new CliError("export 命令的 --output 仅支持项目内相对路径", EXIT_CODES.PARAM_ERROR);
+  }
+
+  const resolvedOutputPath = path.resolve(options.outputPath);
+  const projectRoot = process.cwd();
+  const relativeOutputPath = path.relative(projectRoot, resolvedOutputPath);
+  if (
+    relativeOutputPath === "" ||
+    relativeOutputPath === "." ||
+    relativeOutputPath.startsWith("..") ||
+    path.isAbsolute(relativeOutputPath)
+  ) {
+    throw new CliError("export 命令的 --output 必须位于当前项目目录内", EXIT_CODES.PARAM_ERROR);
+  }
+
+  options.outputPath = ensurePathInsideProject(resolvedOutputPath, options.outputDisplayPath);
+  return options;
+}
+
 function outputPayload(payload, asJson, humanFormatter) {
   if (asJson) {
     console.log(toJson(payload));
@@ -339,6 +459,58 @@ function runPreview(options) {
     title: target.title || target.sessionId,
   };
   outputPayload(payload, options.json, formatPreviewHuman);
+  return EXIT_CODES.OK;
+}
+
+function runExport(options) {
+  const codexHome = history.getCodexHome();
+  const entries = history.loadSessionIndex(codexHome);
+  const target = entries.find((entry) => entry.sessionId === options.sessionId);
+  if (!target) {
+    throw new CliError(`未找到会话: ${options.sessionId}`, EXIT_CODES.NOT_FOUND);
+  }
+
+  const exportData = history.readSessionExportData(target.filePath);
+  let messages = exportData.messages;
+  if (options.maxMessages) {
+    messages = messages.slice(0, options.maxMessages);
+  }
+
+  const payload = {
+    format: options.format,
+    messages,
+    outputPath: options.outputPath,
+    sessionId: target.sessionId,
+    source: target.source,
+    timeText: target.timeText,
+    title: target.title || target.sessionId,
+  };
+  const outputDisplayPath = options.outputDisplayPath || path.relative(process.cwd(), payload.outputPath) || payload.outputPath;
+
+  const markdown = formatSessionMarkdown(payload);
+  try {
+    fs.mkdirSync(path.dirname(payload.outputPath), { recursive: true });
+    if (fs.existsSync(payload.outputPath) && fs.statSync(payload.outputPath).isDirectory()) {
+      throw new CliError(`导出失败: 输出路径是目录 ${outputDisplayPath}`, EXIT_CODES.PARAM_ERROR);
+    }
+    fs.writeFileSync(payload.outputPath, markdown, "utf8");
+  } catch (error) {
+    if (error instanceof CliError) {
+      throw error;
+    }
+    throw new CliError(`导出失败: 无法写入文件 ${outputDisplayPath} (${error.message})`, EXIT_CODES.UNHANDLED);
+  }
+
+  outputPayload(
+    {
+      format: payload.format,
+      messageCount: messages.length,
+      outputPath: outputDisplayPath,
+      sessionId: payload.sessionId,
+    },
+    options.json,
+    formatExportHuman
+  );
   return EXIT_CODES.OK;
 }
 
@@ -473,6 +645,12 @@ function parseCommand(command, args) {
       run: runRecover,
     };
   }
+  if (command === "export") {
+    return {
+      options: parseExportArgs(args),
+      run: runExport,
+    };
+  }
   throw new CliError(`未知命令: ${command}`, EXIT_CODES.PARAM_ERROR);
 }
 
@@ -501,6 +679,7 @@ module.exports = {
   EXIT_CODES,
   parseArchiveArgs,
   parseDeleteArgs,
+  parseExportArgs,
   parseListArgs,
   parsePreviewArgs,
   parseRecoverArgs,
